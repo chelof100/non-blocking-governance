@@ -98,18 +98,18 @@
 \noindent
 The P9 MCP Governance Proxy establishes that safety can be enforced
 protocol-transparently for any MCP-compatible agent---but at a cost:
-when a tool call triggers a governance \HALT{}, the suspended call
+when a tool call triggers a governance \HALT{}, the suspended tool call
 blocks until a human returns a signed \emph{Accountability Proof Block}
 (APB). In scenarios where human response is delayed or asynchronous,
 this blocking model sacrifices liveness for safety.
 
 We resolve this tension by introducing \emph{escrow-based non-blocking
-governance}. \emph{Non-blocking} here refers to agent-session progress:
-the suspended call remains pending in escrow, but the agent session is
-not halted. When a risky tool call triggers a \HALT{}, its state is
+governance}. \emph{Non-blocking} refers to continued agent progress: the suspended
+tool call remains in escrow while the agent session continues.
+When a risky tool call triggers a \HALT{}, its state is
 serialised into a persistent escrow entry and deposited in a priority
 queue rather than blocking the agent pipeline. The agent may continue
-unrelated work while the suspended call remains in escrow. When the
+unrelated work while the suspended tool call remains in escrow. When the
 APB arrives---in the same session or a different one---the escrow entry
 is retrieved and the suspended tool call is resumed from the exact
 preserved state.
@@ -127,13 +127,13 @@ the suspended tool call resumes from the exact state
 $\Eescrow(\thalt)$ with bounded latency~$\Dresume$.
 
 Six experiments validate the construction.
-\emph{E0}~(throughput, $N=100$ agents): P10 achieves
-$10.7\times$--$81\times$ speedup over P9's blocking model as halt
-rates rise from 10\% to 80\%, while unrelated safe-task throughput
-remains unaffected by concurrent HALTs.
+\emph{E0}~(throughput, $N=100$ agents): P10 achieves up to
+$\mathbf{81\times}$ higher throughput than P9 at 80\% halt rate
+($10.7\times$ at 10\%); safe-task throughput remains unaffected in
+all cases.
 \emph{E1}~(overhead, $10{,}000$ cycles):
-P95~$\Drescrow = 0.0064\,\si{\milli\second}$, $156\times$ below the
-$1\,\si{\milli\second}$ gate.
+P95~$\Drescrow = \mathbf{6.4\,\si{\micro\second}}$, $156\times$ below
+the $1\,\si{\milli\second}$ gate.
 \emph{E2}~(timeout semantics, $200\times3$ entries):
 $0$ unauthorised executions across all three fallback modes.
 \emph{E3}~(persistence, $N=100$, proxy restart simulation):
@@ -474,7 +474,7 @@ $(e, \DENY)$. The tool call is not executed; the entry is permanently
 removed from $\Queue$. No path remains by which $a$ can execute.
 
 \emph{Case 3: $\Ttimeout$ expires, fallback $= \ADMIT$.}
-The suspended tool call executes only because the configured policy
+The suspended call executes only because the configured policy
 explicitly authorises it. This constitutes an explicit policy
 authorisation rather than an unauthorised execution.
 
@@ -483,7 +483,7 @@ The entry is forwarded to a backup principal. No direct execution
 occurs until that principal responds with a valid APB, which reduces
 to Case~1.
 
-In all cases, the suspended tool call does not execute without either
+In all cases, the suspended call does not execute without either
 a valid APB satisfying V1--V6 or an explicit policy-authorised
 fallback for that suspended call.
 \qed
@@ -499,16 +499,18 @@ invariant: a tool call can leave escrow only through a resolved APB
 
 \subsection{T10.2 --- Timeout Consistency}
 
-Let $\mathrm{Obs}(a)$ denote the externally visible state of suspended
-call~$a$, defined over the tuple $(\mathit{tool\_call}, \mathit{args},
-\mathit{context}, \Dhat, \thalt)$ and excluding agent-global side
+\begin{remark}
+$\mathrm{Obs}(a)$ denotes the externally visible state of suspended
+call~$a$: the tuple $(\mathit{tool\_call}, \mathit{args},
+\mathit{context}, \Dhat, \thalt)$, excluding agent-global side
 effects such as memory updates and other tool calls in flight.
+\end{remark}
 
 \begin{theorem}[Timeout Consistency]
 \label{thm:timeout}
 Let $e = \Eescrow(\thalt)$ be an escrow entry and $\pi = (\Ttimeout, \DENY)$.
 If no valid APB arrives within $\Ttimeout$, the observable state of the
-\emph{suspended tool call, considered in isolation}, is equivalent at
+\emph{suspended call, considered in isolation}, is equivalent at
 timeout expiration to its state immediately post-\HALT{}:
 \[
   \mathrm{state}_{a}(\thalt + \Ttimeout)
@@ -562,7 +564,7 @@ governance consistency theorem.
 \label{thm:liveness}
 Let $e = \Eescrow(\thalt)$ be an escrow entry, $\pi = (\Ttimeout, f)$
 a timeout policy, and $\APB$ a valid APB (V1--V6) signed at
-$\tsign \le \thalt + \Ttimeout$.  Then the suspended tool call resumes
+$\tsign \le \thalt + \Ttimeout$.  Then the suspended call resumes
 within bounded latency $\Dresume$ after APB submission at $\tsign$:
 \[
   \tsign \le \thalt + \Ttimeout
@@ -644,6 +646,42 @@ modules:
 The escrow layer is implemented as an additive extension over the
 frozen P7--P9 stack (\texttt{stack/}, \texttt{proxy/}, \texttt{agent/});
 no existing file is modified.
+
+\subsection{Usage Example}
+
+Integrating non-blocking governance requires only minimal
+configuration:
+
+\begin{verbatim}
+from stack.apb import GovernanceDecision
+from escrow.escrow_store import EscrowEntry
+from escrow.apb_queue import APBQueue
+from escrow.timeout_policy import TimeoutPolicy, FallbackMode
+
+# --- Session A: HALT path ---
+policy    = TimeoutPolicy(T_timeout=300.0, fallback=FallbackMode.DENY)
+queue     = APBQueue()
+entry     = EscrowEntry.create(
+    tool_call="write_data",
+    args={"table": "users", "row": {...}},
+    context={"session_id": "sess-42"},
+    D_hat=drift_estimate, t_halt=utc_now_iso(),
+)
+escrow_id = queue.enqueue(entry, event_id=governance_event.event_id)
+queue.save("escrow/session_42.json")    # persist across sessions
+
+# --- Session B: APB arrival (same or different session) ---
+queue            = APBQueue.from_file("escrow/session_42.json")
+decision, entry  = queue.resolve(
+    escrow_id, apb, principal_registry, policy
+)
+if decision == GovernanceDecision.RESUME:
+    execute_tool(entry.tool_call, entry.args)
+\end{verbatim}
+
+Between \texttt{enqueue} and \texttt{resolve}, the agent session is
+not blocked: it continues other tasks while the suspended call remains
+in escrow. No changes to tool servers or core agent logic are required.
 
 % =============================================================================
 \section{Experiments}
@@ -922,10 +960,11 @@ implementation requirement: escrow persistence must be
 integrity-protected before V6 can be considered tamper-resistant in
 production. The A3b finding makes this gap explicit.
 
-P10 closes the liveness gap left open by P9 and opens the next
-research questions in multi-hop authority propagation and distributed
-governance, while leaving escrow-store integrity as an explicit future
-requirement rather than a hidden assumption.
+P10 closes the liveness gap left open by P9 and sets up P11's
+escrow-store integrity (R10.1) and multi-hop formal treatment, while
+leaving those extensions as explicit future requirements rather than
+hidden assumptions. \emph{P9 made governance safe but blocking.
+P10 shows it can be safe and live.}
 
 % =============================================================================
 \bibliographystyle{plainnat}
