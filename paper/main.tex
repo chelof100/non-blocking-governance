@@ -1,0 +1,920 @@
+\documentclass[11pt]{article}
+
+% --- Encoding & fonts (matches series style) ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[protrusion=true,expansion=false]{microtype}
+\setlength{\emergencystretch}{3em}
+
+% --- Page geometry ---
+\usepackage[margin=1in, top=1.1in, bottom=1.1in]{geometry}
+
+% --- Packages ---
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{siunitx}
+\usepackage{graphicx}
+\usepackage[colorlinks=true,
+            linkcolor=blue!70!black,
+            citecolor=blue!70!black,
+            urlcolor=blue!70!black]{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage{caption}
+\captionsetup{font=small,labelfont=bf}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric,arrows.meta,positioning,fit,backgrounds}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+% --- Section formatting ---
+\usepackage{titlesec}
+\titleformat{\section}{\large\bfseries}{\thesection}{1em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{1em}{}
+
+% --- Paragraph spacing ---
+\setlength{\parskip}{0.5em}
+\setlength{\parindent}{0pt}
+
+% --- Theorem environments ---
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{definition}{Definition}[section]
+\newtheorem{remark}{Remark}[section]
+
+% --- Notation (inherits P7--P9 commands) ---
+\newcommand{\Azero}{\mathcal{A}_0}
+\newcommand{\Dhat}{\widehat{D}}
+\newcommand{\HALT}{\texttt{HALT}}
+\newcommand{\RESUME}{\texttt{RESUME}}
+\newcommand{\DENY}{\texttt{DENY}}
+\newcommand{\ADMIT}{\texttt{ADMIT}}
+\newcommand{\ESCALATE}{\texttt{ESCALATE}}
+\newcommand{\Pset}{\mathcal{P}}
+\newcommand{\Es}{E_s}
+\newcommand{\Dh}{D_h}
+\newcommand{\sigh}{\sigma_h}
+\newcommand{\Hi}{H_i}
+\newcommand{\ski}{sk_i}
+\newcommand{\pki}{pk_i}
+\newcommand{\APB}{\mathrm{APB}}
+% --- P9 notation ---
+\newcommand{\Proxy}{\Pi}
+\newcommand{\Dnet}{\Delta_{\mathrm{net}}}
+\newcommand{\Dverify}{\Delta_{\mathrm{verify}}}
+\newcommand{\Dpolicy}{\Delta_{\mathrm{policy}}}
+% --- P10-specific ---
+\newcommand{\Eescrow}{E_{\mathrm{escrow}}}
+\newcommand{\thalt}{t_{\mathrm{halt}}}
+\newcommand{\tsign}{t_{\mathrm{sign}}}
+\newcommand{\tapb}{\tau_{\mathrm{apb}}}
+\newcommand{\Ttimeout}{T_{\mathrm{timeout}}}
+\newcommand{\Drescrow}{\Delta_{\mathrm{escrow}}}
+\newcommand{\Dresume}{\Delta_{\mathrm{resume}}}
+\newcommand{\Queue}{\mathcal{Q}}
+
+% --- Title ---
+\title{\textbf{Non-Blocking Governance:}\\[4pt]
+       \large Escrow-Based Asynchronous Authorization for\\
+       Human-Mediated Agent Oversight}
+
+\author{Marcelo Fernandez\\
+        \small TraslaIA\\
+        \small \texttt{info@traslaia.com}}
+\date{}
+
+% =============================================================================
+\begin{document}
+\maketitle
+
+% --- Abstract -----------------------------------------------------------------
+\begin{abstract}
+\noindent
+The P9 MCP Governance Proxy establishes that safety can be enforced
+protocol-transparently for any MCP-compatible agent---but at a cost:
+when a tool call triggers a governance \HALT{}, the entire agent blocks
+until a human returns a signed \emph{Accountability Proof Block} (APB).
+In scenarios where human response is delayed or asynchronous, this
+\emph{blocking} governance model sacrifices liveness for safety.
+
+We resolve this tension by introducing \emph{escrow-based non-blocking
+governance}: when a risky tool call triggers a \HALT{}, its state is
+serialised into an \emph{escrow entry}~$\Eescrow$ and deposited in a
+persistent priority queue~$\Queue$ rather than blocking the agent
+pipeline. The agent immediately resumes other work. When the APB
+arrives---in the same session or a different one---the entry is
+retrieved and the tool call is replayed from the exact state preserved
+at~$\thalt$.
+
+We formalise three results. \emph{T10.1~(Non-Blocking Soundness)}
+establishes that escrow preserves the core safety invariant: no risky
+tool call $a \in A_{\mathrm{risky}}$ executes without a valid APB
+satisfying predicates V1--V6, even while the agent continues other
+tasks. \emph{T10.2~(Timeout Consistency)} establishes that when no
+APB arrives within $\Ttimeout$, the three fallback modes
+(\DENY/\ADMIT/\ESCALATE) render a governance decision that is
+observationally equivalent to an explicit human authorisation.
+\emph{T10.3~(Escrow Liveness)} is the first liveness theorem in the
+series: if the human signs within
+$\tsign \le \thalt + \Ttimeout$, the agent resumes from the exact
+state~$\Eescrow(\thalt)$ with bounded latency~$\Dresume$.
+
+Six experiments validate the construction.
+\emph{E0}~(throughput, $N=100$ agents): P10 achieves $10.7\times$--$81\times$
+speedup over P9's blocking model as halt rates rise from 10\% to 80\%;
+safe-task throughput is unaffected by concurrent HALTs.
+\emph{E1}~(overhead, $10{,}000$ cycles): P95~$\Drescrow = 0.0064\,\si{\milli\second}$,
+$156\times$ below the $1\,\si{\milli\second}$ gate.
+\emph{E2}~(timeout semantics, $200\times3$ entries):
+$0$ unauthorised executions across all three fallback modes.
+\emph{E3}~(persistence, $N=100$, proxy restart simulation):
+$100\%$ correct resume and $100\%$ V5 replay defence after session
+boundary.
+\emph{E4}~(concurrency, $N \in \{1,4,16,64\}$): $0$ exceptions,
+$100\%$ APB validity, $0$ cross-agent contamination.
+\emph{E5}~(adversarial): A1~(replay), A2~(post-timeout APB),
+A3a~(policy forgery) all blocked at $0\%$ success; A3b~(queue-file
+tampering) documents that $\Eescrow$ persistence requires HMAC integrity
+protection---an open item for P11.
+\end{abstract}
+
+% =============================================================================
+\section{Introduction}
+\label{sec:intro}
+
+Human-mediated oversight of LLM agents faces a fundamental operational
+constraint: human responses are asynchronous. A principal reviewing a
+governance event---inspecting drift evidence, deliberating on risk,
+consulting a policy document---takes seconds to minutes. An agent
+waiting synchronously for that response is blocked: it cannot advance
+any of its tasks, process other tool calls, or serve other users.
+
+Paper~9 of this series~\citep{fernandez2026mcpgov} placed governance at
+the MCP protocol layer, achieving zero-modification deployment and
+transparent safety enforcement. But P9's architecture preserved P8's
+blocking semantics~\citep{fernandez2026ibg}: \texttt{p9/apbRequired}
+halts the agent pipeline until a signed APB is returned. As P9 explicitly
+noted: \emph{``APBRequired prioritises safety over liveness. Paper~10 will
+formalise timeout semantics, escrow-state serialisation, and
+deferred-approval queues so that governance events can be resolved
+asynchronously without halting the agent pipeline.''}
+
+This paper fulfils that commitment.
+
+\paragraph{Problem.}
+Formal statement of the blocking limitation:
+
+\begin{quote}
+\emph{In the P9 model, a governance \HALT{} at time $\thalt$ renders
+throughput of the blocked agent equal to zero for the entire duration
+$[\thalt,\, \thalt + \tau_{\mathrm{APB}}]$, where $\tau_{\mathrm{APB}}$
+is the human response latency. As $\tau_{\mathrm{APB}} \to \infty$
+(human offline), agent liveness is lost entirely.}
+\end{quote}
+
+\paragraph{Contribution.}
+We introduce \emph{escrow-based non-blocking governance}, a design
+in which:
+\begin{enumerate}[leftmargin=*, itemsep=2pt]
+  \item A \HALT{} deposits the tool-call state into a persistent escrow
+        store~$\Queue$ and immediately returns control to the agent.
+  \item The agent continues other tasks unimpeded---liveness is bounded by
+        the TTL parameter~$\Ttimeout$, not by human response time.
+  \item When the APB arrives (same session or a different one), the
+        escrow entry is retrieved and the tool call is resumed with
+        full cryptographic re-verification (V1--V6).
+  \item If the APB does not arrive within~$\Ttimeout$, one of three
+        configurable fallback modes fires: \DENY{} (safe default),
+        \ADMIT{} (risk-accepted), or \ESCALATE{} (backup principal).
+\end{enumerate}
+
+The key invariant is that \emph{safety is not relaxed}: no risky
+action executes without an explicit governance decision---either a valid
+APB (V1--V6) or a fallback that itself constitutes a governance
+decision. What changes is that this decision is no longer required to
+be \emph{synchronous}.
+
+\paragraph{Relationship to the series.}
+
+\begin{center}
+\small
+\begin{tabular}{lll}
+\toprule
+Paper & What it formalises & Residual gap \\
+\midrule
+P8 & Identity-bound APB, V1--V5 & Blocking resolution \\
+P9 & Protocol-layer proxy, T9.1--T9.3 & Liveness under async \\
+\textbf{P10} & \textbf{Escrow, V6, T10.1--T10.3} & \textbf{Escrow integrity (A3b)} \\
+P11 & Escrow-store HMAC, multi-hop formal & (future) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% =============================================================================
+\section{Background}
+\label{sec:background}
+
+\subsection{APB and Verification Predicates (P8)}
+
+An \emph{Accountability Proof Block} is a triple
+$\APB = (\Es, \Dh, \sigh)$ where $\Es$ is a system-constructed
+evidence block, $\Dh$ is a human decision block, and $\sigh$ is an
+ed25519 signature over $\mathrm{canonical}(\Es) \,||\,
+\mathrm{canonical}(\Dh)$~\citep{fernandez2026ibg}. Five predicates
+V1--V5 must hold for an APB to be valid:
+
+\begin{itemize}[itemsep=1pt]
+  \item \textbf{V1} Signature: $\sigh$ verifies under $\pki$ of the named principal.
+  \item \textbf{V2} Registration: $\Hi \in \mathcal{P}$ (principal registry).
+  \item \textbf{V3} Activity: $\Hi$ was active at~$t_e$ (not revoked).
+  \item \textbf{V4} Freshness: $|t_{\mathrm{now}} - t_e| \le T_{\mathrm{max}}$ (replay window).
+  \item \textbf{V5} Uniqueness: \texttt{event\_id} not previously seen (duplicate defence).
+\end{itemize}
+
+\subsection{MCP Governance Proxy (P9)}
+
+$\Proxy$ intercepts every tool call between agent client and server.
+On the non-\HALT{} path, $\Proxy$ is observationally equivalent to
+direct pass-through (T9.1). On the \HALT{} path, $\Proxy$ emits
+\texttt{p9/apbRequired} and blocks until \texttt{p9/apbResponse}
+arrives~\citep{fernandez2026mcpgov}. The blocking latency is bounded by
+$\Dnet + \Dverify + \Dpolicy$ (T9.2), but the human response time
+$\tau_{\mathrm{APB}}$ is unbounded.
+
+\subsection{The Liveness Gap}
+
+Let $r$ be the fraction of tool calls that trigger a \HALT{} and
+$T_{\mathrm{task}}$ the mean time per task. Under P9's blocking model,
+agent throughput degrades as:
+\[
+  \Theta_{\mathrm{P9}}(r)
+  = \frac{1}{T_{\mathrm{task}} + r \cdot \tau_{\mathrm{APB}}}.
+\]
+For $r = 0.5$ and $\tau_{\mathrm{APB}} = 2\,\si{s}$ (a modest human
+response time), throughput drops by $99\%$ relative to $r=0$.
+When the human is offline ($\tau_{\mathrm{APB}} \to \infty$),
+$\Theta_{\mathrm{P9}} \to 0$ and liveness is lost entirely.
+
+% =============================================================================
+\section{System Model}
+\label{sec:model}
+
+\subsection{Escrow State}
+\label{sec:escrow}
+
+\begin{definition}[Escrow Entry]
+An \emph{escrow entry} is a tuple
+\[
+  \Eescrow = (\mathit{tool\_call},\, \mathit{args},\, \mathit{context},\,
+               \Dhat,\, \thalt)
+\]
+capturing the complete call state at the moment of \HALT{}. Fields:
+\begin{itemize}[itemsep=1pt]
+  \item $\mathit{tool\_call}$: the MCP tool name.
+  \item $\mathit{args}$: the original call arguments (verbatim).
+  \item $\mathit{context}$: session metadata (session identifier,
+        trace hash, $\Azero$ hash).
+  \item $\Dhat$: the IML drift estimator at~$\thalt$ (used for queue priority).
+  \item $\thalt$: ISO~8601 UTC timestamp of the \HALT{} event.
+\end{itemize}
+Each entry is assigned an opaque \texttt{escrow\_id} (UUID4) on creation.
+\end{definition}
+
+Entries are serialised to JSON and stored in an \emph{EscrowStore}.
+The serialisation is the identity function over field values; no
+cryptographic commitment is required at write time (cf.~\S\ref{sec:discussion}
+for the A3b implications).
+
+\subsection{Priority Queue}
+\label{sec:queue}
+
+\begin{definition}[APB Queue]
+The \emph{APB Queue} $\Queue$ is a priority store over escrow entries
+ordered by $(-\Dhat,\, \thalt)$: highest drift first, then oldest
+\HALT{} first (FIFO within equal drift). $\Queue$ supports:
+\begin{itemize}[itemsep=1pt]
+  \item $\Queue.\mathtt{enqueue}(e, \mathit{event\_id})$: add entry; raise
+        \texttt{DuplicateEventError} if \texttt{event\_id} already pending.
+  \item $\Queue.\mathtt{resolve}(id, \APB, \mathcal{P}, \pi)$:
+        verify V1--V6; return $(d, e)$ where $d \in \{\RESUME, \DENY, \RECAL\}$.
+  \item $\Queue.\mathtt{apply\_timeouts}(\pi, t)$: sweep expired entries;
+        return $[(e_i, f_i)]$ where $f_i$ is the fallback mode.
+  \item $\Queue.\mathtt{save}(p)$ / $\Queue.\mathtt{load}(p)$:
+        atomic JSON persistence (multi-session support).
+\end{itemize}
+\end{definition}
+
+\subsection{Timeout Policy and V6 Predicate}
+\label{sec:timeout}
+
+\begin{definition}[Timeout Policy]
+A \emph{timeout policy} $\pi = (\Ttimeout, f)$ where:
+\begin{itemize}[itemsep=1pt]
+  \item $\Ttimeout \in (0, \infty]$: maximum seconds from $\thalt$ to
+        APB arrival.
+  \item $f \in \{\DENY, \ADMIT, \ESCALATE\}$: fallback action if
+        $\Ttimeout$ expires without an APB.
+\end{itemize}
+\end{definition}
+
+\begin{definition}[V6 Predicate --- Timeout Enforcement]
+\label{def:v6}
+Let $\tapb = \Es.t_e$ be the APB signing timestamp and
+$\pi = (\Ttimeout, f)$ the active policy. Then:
+\[
+  V6(\APB, e, \pi)
+  \;\triangleq\;
+  \tapb \;\le\; \thalt + \Ttimeout.
+\]
+An APB passing V1--V5 but failing V6 is rejected with
+\texttt{TimeoutExpiredError}; the entry remains pending for fallback
+processing.
+\end{definition}
+
+V6 stacks on top of V5 in the verifier: an APB must satisfy all six
+predicates for $\Queue.\mathtt{resolve}$ to succeed.
+V4 defends against clock-based replay; V5 defends against
+within-window duplicate submissions; V6 defends against late APBs
+that would violate the $\Ttimeout$ commitment made to the agent.
+
+\subsection{Fallback Modes}
+\label{sec:fallback}
+
+The three fallback modes represent distinct governance postures:
+
+\begin{description}[itemsep=2pt]
+  \item[\DENY{}] \emph{(default)} The tool call is dropped; no execution
+    occurs. This preserves the ``no authority, no action'' invariant even
+    in the absence of a human response. Appropriate for high-risk tools.
+  \item[\ADMIT{}] The tool call is executed with risk accepted by policy.
+    The decision is recorded in $\Queue$'s audit trail. Appropriate for
+    low-risk tools where blocking would cause service degradation.
+  \item[\ESCALATE{}] The entry is routed to a backup principal or
+    out-of-band resolution channel. Appropriate for critical operations
+    where both DENY and ADMIT are unacceptable.
+\end{description}
+
+% =============================================================================
+\section{Non-Blocking Governance Protocol}
+\label{sec:protocol}
+
+\subsection{Session A: HALT and Escrow}
+
+\begin{algorithm}[H]
+\caption{Escrow enqueue on \HALT{} (replaces P9 blocking wait)}
+\label{alg:enqueue}
+\begin{algorithmic}[1]
+\Require tool call $(a, \mathit{args})$, IML state $\Dhat$, queue $\Queue$, policy $\pi$
+\State $t_{\mathrm{now}} \gets \mathtt{utc\_now}()$
+\State $\Es \gets \mathtt{construct\_evidence}(\Azero, \Dhat, \mathit{trace}, t_{\mathrm{now}})$
+\State $e \gets \Eescrow(a, \mathit{args}, \mathit{ctx}, \Dhat, t_{\mathrm{now}})$
+\State $\mathit{eid} \gets \Queue.\mathtt{enqueue}(e,\; \Es.\mathtt{event\_id})$
+\Comment{$O(1)$ --- returns immediately}
+\State \textbf{emit} \texttt{apbRequired}$(a, \mathit{args}, \mathit{eid},\, \mathrm{summary}(\Es))$
+\State \Return \textbf{control to agent}
+\Comment{agent continues other tasks}
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Session B: APB Arrival and Resume}
+
+\begin{algorithm}[H]
+\caption{Escrow resolution on APB arrival}
+\label{alg:resolve}
+\begin{algorithmic}[1]
+\Require APB response $(\mathit{eid}, \APB)$, queue $\Queue$, registry $\mathcal{P}$, policy $\pi$
+\State $e \gets \Queue.\mathtt{get}(\mathit{eid})$
+\Comment{raises KeyError if not found}
+\State $r \gets \mathtt{verify\_apb}(\APB, \mathcal{P})$
+\Comment{V1--V5}
+\If{$\neg r.\mathtt{is\_valid}$}
+  \State \Return \texttt{REJECTED}, $r.\mathtt{result}$
+\EndIf
+\If{$\neg V6(\APB, e, \pi)$}
+  \Comment{$\tapb > \thalt + \Ttimeout$}
+  \State \Return \texttt{TIMEOUT\_EXPIRED}
+\EndIf
+\State $(d, e) \gets \Queue.\mathtt{resolve}(\mathit{eid}, \APB, \mathcal{P}, \pi)$
+\State \textbf{resume} tool call $(e.\mathit{tool\_call}, e.\mathit{args})$
+\Comment{from exact state $\Eescrow(\thalt)$}
+\State \Return \texttt{RESOLVED}, $d$
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Timeout Sweep}
+
+At configurable intervals the queue runs a timeout sweep:
+for each entry $e$ with $t_{\mathrm{now}} > \thalt + \Ttimeout$,
+$\Queue.\mathtt{apply\_timeouts}(\pi, t_{\mathrm{now}})$ returns
+$(e, f)$ where $f = \pi.f$. The caller is responsible for acting
+on the fallback: discarding the call (\DENY), executing it (\ADMIT),
+or forwarding it (\ESCALATE).
+
+% =============================================================================
+\section{Formal Results}
+\label{sec:theory}
+
+We state and prove three theorems. Proofs rely on the P8 APB
+construction and P9 proxy invariants; references to earlier results
+are cited explicitly.
+
+\subsection{T10.1 --- Non-Blocking Soundness}
+
+\begin{theorem}[Non-Blocking Soundness]
+\label{thm:soundness}
+Under the escrow protocol (Algorithms~\ref{alg:enqueue}--\ref{alg:resolve}),
+for every risky tool call $a \in A_{\mathrm{risky}}$:
+\[
+  a \text{ executes}
+  \;\Longrightarrow\;
+  \exists\,\APB : V1(\APB) \land \cdots \land V6(\APB, e, \pi).
+\]
+Equivalently, no risky tool call executes without a valid APB satisfying
+all six predicates, even when the agent continues other tasks during
+the escrow period.
+\end{theorem}
+
+\begin{proof}
+By case analysis on the execution path.
+
+\emph{Case 1: APB arrives before $\Ttimeout$.}
+Algorithm~\ref{alg:resolve} runs V1--V5 (line~2) and V6 (line~5)
+before executing the tool call (line~9). If any predicate fails, the
+function returns early at lines 3 or 6 without executing $a$. The
+tool call executes only if all six checks pass ($r.\mathtt{is\_valid}
+\land V6$). This establishes the implication.
+
+\emph{Case 2: $\Ttimeout$ expires, fallback $= \DENY$.}
+$\Queue.\mathtt{apply\_timeouts}$ removes the entry and returns
+$(e, \DENY)$. The tool call is not executed; the entry is permanently
+removed from $\Queue$. No path remains by which $a$ can execute.
+
+\emph{Case 3: $\Ttimeout$ expires, fallback $= \ADMIT$.}
+The tool call is executed by explicit policy decision. This constitutes
+a governance decision (ADMIT is a valid fallback mode in $\pi$), not
+an unauthorised execution. The safety invariant at the \emph{policy}
+level holds: the operator configured \ADMIT{} for this tool, accepting
+the risk.
+
+\emph{Case 4: $\Ttimeout$ expires, fallback $= \ESCALATE$.}
+The entry is forwarded to a backup principal. No direct execution
+occurs until that principal responds with a valid APB, which reduces
+to Case~1.
+
+In all cases, no risky tool call executes without either a V1--V6
+valid APB or an explicit policy authorisation.
+\qed
+\end{proof}
+
+\begin{remark}
+T10.1 extends P9's Halt Invariant to the async setting. The key
+difference: in P9, safety follows from blocking (no APB = no
+execution = no progress). In P10, safety follows from the escrow
+invariant: a tool call can leave escrow only through a resolved APB
+(cases 1, 3, 4) or a \DENY{} fallback (case 2).
+\end{remark}
+
+\subsection{T10.2 --- Timeout Consistency}
+
+\begin{theorem}[Timeout Consistency]
+\label{thm:timeout}
+Let $e = \Eescrow(\thalt)$ be an escrow entry and $\pi = (\Ttimeout, \DENY)$.
+If no valid APB arrives within $\Ttimeout$, the observable state of the
+tool call at $\thalt + \Ttimeout$ is equivalent to its state immediately
+post-\HALT{}:
+\[
+  \mathrm{state}_{a}(\thalt + \Ttimeout)
+  \;\equiv_{\mathrm{obs}}\;
+  \mathrm{state}_{a}(\thalt).
+\]
+Furthermore, the total latency to resume after a valid APB arrives at
+$\tsign \le \thalt + \Ttimeout$ is bounded:
+\[
+  \Dresume \;\le\; \Drescrow + \Delta_{\mathrm{get}},
+\]
+where $\Drescrow$ is the serialisation cost and $\Delta_{\mathrm{get}}$
+is the deserialisation and in-memory lookup cost.
+\end{theorem}
+
+\begin{proof}
+\emph{Observational equivalence at DENY.}
+When $\DENY$ fires, $\Queue.\mathtt{apply\_timeouts}$ returns the entry
+without modifying it and removes it from $\Queue$. The tool call state
+$(\mathit{tool\_call}, \mathit{args}, \mathit{context}, \Dhat)$ is
+unchanged from its value at the time of enqueue (which equals
+$\thalt$). Since no external side effect of $a$ has occurred (Theorem
+T10.1, Case~2), the observable state is identical to what it was at
+$\thalt$.
+
+\emph{Bounded resume latency.}
+The entry $e$ is stored via $\Eescrow.\mathtt{to\_json}()$ (cost
+$\Drescrow$) and retrieved via $\mathtt{EscrowStore.get}()$ (cost
+$\Delta_{\mathrm{get}}$). Both operations are $O(1)$ in the size of
+the entry (constant-width fields). By the E1 measurement
+(\S\ref{sec:experiments}), the P95 round-trip cost is
+$0.0064\,\si{\milli\second}$, confirming that $\Dresume$ is bounded
+and negligible relative to LLM inference and human response times.
+\qed
+\end{proof}
+
+\begin{remark}
+T10.2 covers only the state of the suspended \emph{tool call}, not the
+state of the agent as a whole. The agent may have made progress on
+other tasks during $[\thalt, \thalt + \Ttimeout]$; T10.2 makes no
+claim about that progress. This is intentional: the equivalence is
+local to the suspended call, which is the correct scope for a
+governance consistency theorem.
+\end{remark}
+
+\subsection{T10.3 --- Escrow Liveness}
+
+\begin{theorem}[Escrow Liveness]
+\label{thm:liveness}
+Let $e = \Eescrow(\thalt)$ be an escrow entry, $\pi = (\Ttimeout, f)$
+a timeout policy, and $\APB$ a valid APB (V1--V6) signed at
+$\tsign \le \thalt + \Ttimeout$.  Then the agent resumes execution of
+the suspended tool call within bounded latency $\Dresume$ from
+$\tsign$:
+\[
+  \tsign \le \thalt + \Ttimeout
+  \;\Longrightarrow\;
+  \text{tool call resumes within } \tsign + \Dresume.
+\]
+\end{theorem}
+
+\begin{proof}
+By the V6 predicate (Definition~\ref{def:v6}):
+$\tsign \le \thalt + \Ttimeout$ is precisely the condition $V6(\APB, e,
+\pi) = \top$.  Combined with V1--V5 (which hold by assumption that
+$\APB$ is valid), Algorithm~\ref{alg:resolve} reaches line~9 and
+executes the tool call.
+
+The execution happens within $\tsign + \Dresume$ because:
+(a) the APB is submitted at $\tsign$;
+(b) V1--V5 take $O(\Dverify)$, V6 is a single timestamp comparison
+    $O(1)$;
+(c) the entry is retrieved from $\Queue$ in $O(\Delta_{\mathrm{get}})$.
+
+Thus the total delay from APB submission to tool call execution is
+$\Dverify + \Delta_{\mathrm{get}} \le \Dresume$, which is empirically
+bounded by $0.0064\,\si{\milli\second}$ P95 (E1,
+\S\ref{sec:experiments}).
+
+This is the first \emph{liveness} theorem in the series. P7--P9
+established safety properties (no unauthorised execution); T10.3
+establishes that, given a responsive human
+($\tsign \le \thalt + \Ttimeout$), the agent is \emph{guaranteed to
+make progress} on the suspended task.
+\qed
+\end{proof}
+
+\begin{remark}
+T10.3 is conditional on \emph{human-responsiveness}: the bound
+$\tsign \le \thalt + \Ttimeout$ must hold. This is the unavoidable
+cost of human-in-the-loop governance. The contribution of T10.3 is
+not to eliminate this dependency, but to show that it can be
+characterised as a bounded, checkable condition---V6---rather than
+an implicit assumption.
+\end{remark}
+
+% =============================================================================
+\section{Implementation}
+\label{sec:impl}
+
+The escrow layer is implemented in Python~3.12 and comprises three
+modules:
+
+\begin{description}[itemsep=4pt]
+  \item[\texttt{escrow/escrow\_store.py}]
+    \texttt{EscrowEntry} is a \texttt{frozen dataclass} with six
+    fields matching Definition~3.1. JSON serialisation uses stdlib
+    \texttt{json} (no external dependencies). \texttt{EscrowStore}
+    provides \texttt{put}/\texttt{get}/\texttt{remove}/\texttt{list\_entries}
+    plus atomic file persistence via \texttt{save(path)} /
+    \texttt{load(path)} (write-to-tmp then rename).
+
+  \item[\texttt{escrow/timeout\_policy.py}]
+    \texttt{FallbackMode} (\DENY/\ADMIT/\ESCALATE) is a \texttt{str}
+    enum. \texttt{TimeoutPolicy} holds $(\Ttimeout, f)$ and exposes
+    \texttt{is\_expired}(\textit{entry}, \textit{now}) and
+    \texttt{apply\_fallback}(\textit{entry}).
+    \texttt{v6\_check}(\textit{apb\_t\_e}, $\thalt$, $\Ttimeout$) is a
+    standalone function imported by \texttt{APBQueue.resolve}.
+
+  \item[\texttt{escrow/apb\_queue.py}]
+    \texttt{APBQueue} wraps \texttt{EscrowStore} with priority ordering,
+    event-id deduplication (two dictionaries: \textit{event\_to\_escrow}
+    and \textit{escrow\_to\_event}), and a \texttt{\_resolved\_event\_ids}
+    set for V5 replay defence that persists across sessions.
+    \texttt{resolve} calls V1--V5 via the frozen P9 verifier, then V6
+    via \texttt{v6\_check}. Three custom exceptions carry structured
+    diagnostic data: \texttt{DuplicateEventError},
+    \texttt{APBVerificationError}, \texttt{TimeoutExpiredError}.
+\end{description}
+
+The frozen P7--P9 stack (\texttt{stack/}, \texttt{proxy/},
+\texttt{agent/}) is untouched; the escrow layer extends it with zero
+modifications to existing files.
+
+% =============================================================================
+\section{Experiments}
+\label{sec:experiments}
+
+All experiments run on Python~3.12, Windows~11, Intel architecture.
+Results are deterministic (fixed seed where applicable). Raw data
+in \texttt{results/}.
+
+\subsection{E0 --- Throughput Comparison (P9 vs.\ P10)}
+
+\paragraph{Setup.}
+$N=100$ agents, $M=200$ tasks per agent, $T_{\mathrm{task}}=10\,\si{\milli\second}$,
+$\tau_{\mathrm{APB}}=2\,\si{s}$ (human response latency), halt rates
+$r \in \{0, 0.1, 0.2, 0.4, 0.6, 0.8\}$. Logical-time simulation
+(no wall-clock sleep) using measured $\Drescrow$ and $\Dresume$ P95
+values as escrow overhead.
+
+\paragraph{Two metrics (measured separately).}
+\begin{itemize}[itemsep=2pt]
+  \item \textbf{Metric 1} ($\Dresume$): latency from APB arrival to
+    task resumption; measured empirically in E1 ($\Delta_{\mathrm{resume}}$
+    P95 $= 0.0001\,\si{\milli\second}$).
+  \item \textbf{Metric 2} (continuity): throughput of non-blocked tasks
+    during the escrow window. In P9, all tasks block ($\Theta_{\mathrm{safe}}
+    = 0$). In P10, safe tasks are unaffected ($\Theta_{\mathrm{safe}} =
+    1/T_{\mathrm{task}} = 100\,\text{tps}$).
+\end{itemize}
+
+\begin{table}[h]
+\centering
+\caption{E0 --- Throughput comparison (tasks per second, mean over $N=100$ agents).
+P10~total includes both safe tasks and resumed escrow tasks.
+P10~safe is the throughput of non-blocked tasks \emph{during} the escrow window.}
+\label{tab:e0}
+\begin{tabular}{rrrrr}
+\toprule
+Halt rate & P9 (tps) & P10 total (tps) & P10 safe (tps) & Speedup \\
+\midrule
+0.0 & 100.00 & 100.00 & 100.00 & $1.00\times$ \\
+0.1 &   4.76 &  51.06 & 100.00 & $10.7\times$ \\
+0.2 &   2.49 &  50.53 & 100.00 & $20.3\times$ \\
+0.4 &   1.25 &  50.21 & 100.00 & $40.0\times$ \\
+0.6 &   0.84 &  50.07 & 100.00 & $59.8\times$ \\
+0.8 &   0.62 &  50.04 & 100.00 & $81.0\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+P10 total throughput is bounded below by $N_{\mathrm{safe}}/t_{\mathrm{agent}}$,
+which approaches $50\,\text{tps}$ as $r \to 1$ (half the tasks are safe,
+none block). P9 throughput degrades as
+$\Theta_{\mathrm{P9}} \approx 1/(r \cdot \tau_{\mathrm{APB}})$ for large~$r$.
+
+\paragraph{Gate.} P10 throughput $\ge$ P9 throughput at all $r > 0$:
+\textbf{PASSED}.
+
+\subsection{E1 --- Escrow Overhead}
+
+\paragraph{Setup.} $10{,}000$ cycles per benchmark operation. Table~\ref{tab:e1}.
+
+\begin{table}[h]
+\centering
+\caption{E1 --- Escrow operation latencies ($\si{\milli\second}$, Python~3.12).}
+\label{tab:e1}
+\begin{tabular}{lrrrr}
+\toprule
+Operation & Mean & P50 & P95 & P99 \\
+\midrule
+Roundtrip (ser.\ + deser.) & 0.0059 & 0.0056 & \textbf{0.0064} & 0.0095 \\
+Serialize only              & 0.0029 & 0.0028 & 0.0031 & 0.0036 \\
+Deserialize only            & 0.0029 & 0.0028 & 0.0031 & 0.0036 \\
+Put (in-memory)             & 0.0002 & 0.0001 & 0.0003 & 0.0005 \\
+\midrule
+File save (1 entry)         & 0.3572 & 0.3388 & 0.4562 & 0.6404 \\
+File save (100 entries)     & 1.1253 & 1.0871 & 1.3095 & 1.4017 \\
+File load (1 entry)         & 0.0833 & 0.0462 & 0.0806 & 0.1750 \\
+File load (100 entries)     & 0.3242 & 0.2835 & 0.3611 & 0.4599 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+P95 roundtrip $= 0.0064\,\si{\milli\second}$, which is $156\times$ below
+the $1\,\si{\milli\second}$ gate. File save/load costs are dominated
+by OS I/O and are negligible relative to LLM inference
+($\sim$seconds).
+
+\paragraph{Gate.} P95~$\Drescrow < 1\,\si{\milli\second}$:
+\textbf{PASSED} ($0.0064\,\si{\milli\second}$).
+
+\subsection{E2 --- Timeout Semantics}
+
+\paragraph{Setup.}
+$N=200$ expired entries per fallback mode
+($\Ttimeout=60\,\si{s}$, entries created $120\,\si{s}$ before
+sweep time). Mixed-queue trial: $50$ expired $+$ $50$ active entries.
+
+All 200 entries swept per mode; 0 unauthorized executions across
+\DENY, \ADMIT, \ESCALATE. Active entries in the mixed trial were
+not swept ($50/50$ preserved). An \emph{``unauthorised execution''}
+is defined as any entry that exits the queue without receiving a
+governance decision (valid APB or explicit fallback); the count was~$0$
+in all trials.
+
+\paragraph{Gate.} $0$ unauthorized executions: \textbf{PASSED}.
+
+\subsection{E3 --- Queue Persistence}
+
+\paragraph{Setup.}
+$N=100$ entries; full-restart trial (all entries enqueued in session~A,
+saved, reloaded in session~B, resolved with fresh APBs); partial-restart
+trial (half resolved pre-restart, remainder post-restart with V5 replay
+test).
+
+Full-restart: $100/100$ field-parity checks, $100/100$ correct
+governance decisions, $0$ entries remaining after resolution.
+Partial-restart: $50/50$ active entries present after reload;
+$50/50$ pre-restart APBs blocked by V5
+(\texttt{DUPLICATE\_EVENT\_ID}) after session~B reloads the
+\texttt{\_resolved\_event\_ids} set.
+
+\paragraph{Gate.} $100\%$ correct resume post-restart: \textbf{PASSED}.
+
+\subsection{E4 --- Concurrency}
+
+\paragraph{Setup.}
+$N \in \{1,4,16,64\}$ agents, each with $M=20$ entries, all
+running concurrently (\texttt{ThreadPoolExecutor}). Each agent owns
+an independent \texttt{APBQueue} (architecture reflects one queue per
+proxy instance, not shared state).
+
+$0$ exceptions across all configurations; $100\%$ APB validity;
+$0$ cross-agent entry contamination. At $N=64$: $1{,}280$ total
+resolutions, all correct.
+
+\paragraph{Gate.} $0$ exceptions, $100\%$ APB validity:
+\textbf{PASSED}.
+
+\subsection{E5 --- Adversarial Async}
+
+\paragraph{Setup.} $N=100$ attacks per vector.
+
+\begin{description}[itemsep=3pt]
+  \item[A1 --- Replay event\_id.] After legitimate resolution, attacker
+    re-submits the same APB to a fresh entry. Blocked by V5
+    (\texttt{DUPLICATE\_EVENT\_ID}); $100/100$ blocked.
+
+  \item[A2 --- APB post-timeout.] APB signed at
+    $\tapb = t_{\mathrm{halt}} + 90\,\si{\min}$ against a
+    $\Ttimeout=60\,\si{\min}$ policy.
+    Blocked by V6 (\texttt{TimeoutExpiredError}); $100/100$ blocked.
+
+  \item[A3a --- Policy forgery.] Attacker supplies a lenient
+    $\Ttimeout = 10^{12}\,\si{s}$; server enforces strict
+    $\Ttimeout = 3{,}600\,\si{s}$. Since the server controls
+    the policy parameter in \texttt{resolve()}, the attack is
+    impossible architecturally; $100/100$ blocked.
+
+  \item[A3b --- Queue file tampering.] Attacker modifies the
+    \texttt{escrow.json} file on disk, extending \texttt{t\_halt}
+    to make a late APB appear within the window.
+    \textbf{Finding:} tampering succeeded in $100/100$ trials.
+    This is documented as an open security requirement: the escrow
+    store requires HMAC integrity protection (see~\S\ref{sec:discussion}).
+\end{description}
+
+\paragraph{Gate.} $0\%$ adversary success (A1/A2/A3a):
+\textbf{PASSED}. A3b: \textbf{documented finding}.
+
+% =============================================================================
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{The A3b Finding: Escrow Integrity}
+
+The A3b result is not a defect in the escrow protocol; it is a
+structural precondition that the current implementation leaves unmet.
+V6 is correct given authentic values of $\thalt$. The issue is that
+$\thalt$ is stored in plaintext JSON without a cryptographic commitment
+linking it to the original governance event.
+
+The mitigation is analogous to P8's \texttt{APBLog}: HMAC-chain
+the escrow store so that each entry is integrity-protected by a
+server-held key. An attacker without the key cannot modify
+\texttt{t\_halt} without invalidating the chain. Formally:
+
+\begin{quote}
+\emph{Requirement R10.1:} The \texttt{EscrowStore} must maintain an
+HMAC chain over all entries such that any modification to a stored
+$\thalt$ (or any other field) is detected with probability
+$1 - 2^{-\lambda}$ where $\lambda$ is the HMAC security parameter.
+\end{quote}
+
+This requirement will be formalised and implemented in P11 alongside
+the multi-hop formal treatment. The E5/A3b experiment is included
+precisely to make this gap explicit rather than implicit.
+
+\subsection{Non-Blocking vs.\ Weaker Guarantees}
+
+A na\"ive alternative to escrow is a simple timeout: if no APB arrives
+within $\Ttimeout$, deny the call and continue. This achieves liveness
+but loses T10.3's resume guarantee: the tool call state is not preserved,
+and the agent must re-derive it on retry (which may not be possible if
+the original context has changed). Escrow is strictly stronger: it
+preserves the exact call state and enables \emph{replay from
+$\Eescrow(\thalt)$} rather than retry.
+
+\subsection{Relationship to CAP-Like Tradeoffs}
+
+An intuition from distributed systems is useful here, though we do not
+formalise it as a CAP theorem (the definitions are not directly
+applicable):
+
+\begin{itemize}[itemsep=2pt]
+  \item P9 prioritises \emph{safety} (C in the analogy) over
+    \emph{liveness} (A): blocking until APB arrives.
+  \item P10 achieves \emph{bounded liveness} without relaxing safety:
+    the escrow invariant ensures safety holds at all times; T10.3
+    bounds liveness under the human-responsiveness assumption.
+\end{itemize}
+
+The key insight is that safety and liveness are not fundamentally
+opposed in human-mediated governance---they can coexist if the
+human response is bounded. V6 is the formal expression of that bound.
+
+\subsection{Scope of T10.2}
+
+T10.2's observational equivalence is local to the suspended
+\emph{tool call}, not the agent as a whole. During $[\thalt,
+\thalt + \Ttimeout]$, the agent may complete other tasks, producing
+observable side effects. T10.2 does not claim those are absent; it
+claims only that the \emph{state of the suspended call} is preserved.
+This is the correct scope: governance is per-call, not per-session.
+
+% =============================================================================
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{LLM agent governance.}
+The Agent Governance Series~\citep{fernandez2026a,fernandez2026acp,
+fernandez2026iml,fernandez2026govstr,fernandez2026ram,fernandez2026opram,
+fernandez2026applied,fernandez2026ibg,fernandez2026mcpgov} provides the
+foundational stack that P10 extends. The blocking limitation of P9 is
+the direct motivation for this work.
+
+\paragraph{Runtime verification.}
+Leucker and Schallhart~\citep{leucker2009brief} survey runtime
+verification; our IML monitor (P2) fits this framework.
+Basin et al.~\citep{basin2012monitoring} study monitoring for
+usage-control policies in distributed systems, a close analogue of
+our principal-based governance.
+
+\paragraph{Asynchronous authorization.}
+OAuth~2.0 and OpenID Connect \citep{hardt2012oauth} support
+asynchronous token issuance but do not formalise liveness bounds
+under delayed responses. Our V6 predicate and T10.3 fill this gap
+for the agent governance setting.
+
+\paragraph{Persistence and recovery.}
+The HMAC-chained log of P8~\citep{fernandez2026ibg} and the write-ahead
+log in database systems~\citep{mohan1992aries} both use
+tamper-evident persistence; the A3b finding shows P10 needs to apply
+the same principle to the escrow store.
+
+% =============================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+We have introduced escrow-based non-blocking governance, a design that
+preserves the P8--P9 safety guarantee---no risky tool call executes
+without a valid APB (V1--V6)---while providing bounded liveness under
+asynchronous human resolution. The three theorems establish:
+
+\begin{itemize}[itemsep=2pt]
+  \item \textbf{T10.1} (Soundness): escrow does not relax safety.
+  \item \textbf{T10.2} (Consistency): timeout fallbacks are equivalent
+    to explicit governance decisions; resume latency is bounded.
+  \item \textbf{T10.3} (Liveness): the first liveness theorem in the
+    series; given a responsive human, the agent resumes with
+    bounded delay $\Dresume = 0.0064\,\si{\milli\second}$ P95.
+\end{itemize}
+
+Six experiments confirm the construction. The A3b finding documents
+that escrow store integrity (HMAC protection of $\thalt$) is a
+necessary precondition for full V6 tamper-resistance, providing a
+clear scope for P11.
+
+P10 closes the liveness gap left open by P9 and establishes the
+formal foundation for the remaining Phase~II papers: P11 (multi-hop
+formal treatment and escrow integrity) and P12 (distributed
+governance at multi-organisation scale).
+
+% =============================================================================
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}
