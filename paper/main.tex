@@ -104,7 +104,9 @@ blocks until a human returns a signed \emph{Accountability Proof Block}
 this blocking model sacrifices liveness for safety.
 
 We resolve this tension by introducing \emph{escrow-based non-blocking
-governance}. When a risky tool call triggers a \HALT{}, its state is
+governance}. \emph{Non-blocking} here refers to agent-session progress:
+the suspended call remains pending in escrow, but the agent session is
+not halted. When a risky tool call triggers a \HALT{}, its state is
 serialised into a persistent escrow entry and deposited in a priority
 queue rather than blocking the agent pipeline. The agent may continue
 unrelated work while the suspended call remains in escrow. When the
@@ -142,7 +144,7 @@ $100\%$ APB validity, $0$ cross-agent contamination.
 \emph{E5}~(adversarial): A1~(replay), A2~(post-timeout APB),
 A3a~(policy forgery) all blocked at $0\%$ success; A3b~(queue-file
 tampering) documents that the escrow store requires HMAC integrity
-protection---an implementation gap addressed in P11.
+protection---an implementation gap left as future work.
 \end{abstract}
 
 % =============================================================================
@@ -367,6 +369,11 @@ The three fallback modes represent distinct governance postures:
     unsatisfactory.
 \end{description}
 
+\noindent Fallback modes do not weaken safety: they externalise the
+authorisation decision from the human principal to a pre-committed
+governance policy. The safety invariant of T10.1 holds under all three
+modes.
+
 % =============================================================================
 \section{Non-Blocking Governance Protocol}
 \label{sec:protocol}
@@ -382,7 +389,7 @@ The three fallback modes represent distinct governance postures:
 \State $\Es \gets \mathtt{construct\_evidence}(\Azero, \Dhat, \mathit{trace}, t_{\mathrm{now}})$
 \State $e \gets \Eescrow(a, \mathit{args}, \mathit{ctx}, \Dhat, t_{\mathrm{now}})$
 \State $\mathit{eid} \gets \Queue.\mathtt{enqueue}(e,\; \Es.\mathtt{event\_id})$
-\Comment{$O(1)$ --- returns immediately}
+\Comment{amortised $O(1)$ in-memory; returns immediately}
 \State \textbf{emit} \texttt{apbRequired}$(a, \mathit{args}, \mathit{eid},\, \mathrm{summary}(\Es))$
 \State \Return \textbf{control to agent}
 \Comment{agent continues other tasks}
@@ -492,6 +499,11 @@ invariant: a tool call can leave escrow only through a resolved APB
 
 \subsection{T10.2 --- Timeout Consistency}
 
+Let $\mathrm{Obs}(a)$ denote the externally visible state of suspended
+call~$a$, defined over the tuple $(\mathit{tool\_call}, \mathit{args},
+\mathit{context}, \Dhat, \thalt)$ and excluding agent-global side
+effects such as memory updates and other tool calls in flight.
+
 \begin{theorem}[Timeout Consistency]
 \label{thm:timeout}
 Let $e = \Eescrow(\thalt)$ be an escrow entry and $\pi = (\Ttimeout, \DENY)$.
@@ -525,11 +537,13 @@ identical to what it was at $\thalt$.
 \emph{Bounded resume latency.}
 The entry $e$ is stored via $\Eescrow.\mathtt{to\_json}()$ (cost
 $\Drescrow$) and retrieved via $\mathtt{EscrowStore.get}()$ (cost
-$\Delta_{\mathrm{get}}$). Both operations are $O(1)$ in the size of
-the entry (constant-width fields). By the E1 measurement
-(\S\ref{sec:experiments}), the P95 round-trip cost is
-$0.0064\,\si{\milli\second}$, confirming that $\Dresume$ is bounded
-and negligible relative to LLM inference and human response times.
+$\Delta_{\mathrm{get}}$). Both are amortised $O(1)$ in the size of the
+entry (constant-width fields). E1 measures the serialisation roundtrip
+$\Drescrow = 0.0064\,\si{\milli\second}$ P95, which serves as the
+conservative upper bound on $\Dresume$. The in-memory resume path
+(without file I/O) measures $0.0001\,\si{\milli\second}$ P95 (E0),
+confirming that $\Dresume$ is bounded and negligible relative to LLM
+inference and human response times.
 \qed
 \end{proof}
 
@@ -571,9 +585,10 @@ The execution happens within $\tsign + \Dresume$ because:
 (c) the entry is retrieved from $\Queue$ in $O(\Delta_{\mathrm{get}})$.
 
 Thus the total delay from APB submission to tool call execution is
-$\Dverify + \Delta_{\mathrm{get}} \le \Dresume$, which is empirically
-bounded by $0.0064\,\si{\milli\second}$ P95 (E1,
-\S\ref{sec:experiments}).
+$\Dverify + \Delta_{\mathrm{get}} \le \Dresume \le \Drescrow$, where
+$\Drescrow = 0.0064\,\si{\milli\second}$ P95 is the serialisation
+upper bound from E1; the tighter in-memory path measures
+$\Dresume = 0.0001\,\si{\milli\second}$ P95 (E0).
 
 This is the first \emph{liveness} theorem in the series. It does not
 remove the human-responsiveness assumption; it makes that assumption
@@ -626,9 +641,9 @@ modules:
     \texttt{APBVerificationError}, \texttt{TimeoutExpiredError}.
 \end{description}
 
-The frozen P7--P9 stack (\texttt{stack/}, \texttt{proxy/},
-\texttt{agent/}) is untouched; the escrow layer extends it with zero
-modifications to existing files.
+The escrow layer is implemented as an additive extension over the
+frozen P7--P9 stack (\texttt{stack/}, \texttt{proxy/}, \texttt{agent/});
+no existing file is modified.
 
 % =============================================================================
 \section{Experiments}
@@ -643,15 +658,18 @@ in \texttt{results/}.
 \paragraph{Setup.}
 $N=100$ agents, $M=200$ tasks per agent, $T_{\mathrm{task}}=10\,\si{\milli\second}$,
 $\tau_{\mathrm{APB}}=2\,\si{s}$ (human response latency), halt rates
-$r \in \{0, 0.1, 0.2, 0.4, 0.6, 0.8\}$. Logical-time simulation
-(no wall-clock sleep) using measured $\Drescrow$ and $\Dresume$ P95
-values as escrow overhead.
+$r \in \{0, 0.1, 0.2, 0.4, 0.6, 0.8\}$. E0 evaluates
+\emph{protocol-level} throughput under simulated human latency; it is
+a logical-time simulation, not a wall-clock OS-level benchmark.
+Escrow overhead uses measured $\Drescrow$ and $\Dresume$ P95 values.
 
 \paragraph{Two metrics (measured separately).}
 \begin{itemize}[itemsep=2pt]
   \item \textbf{Metric 1} ($\Dresume$): latency from APB arrival to
-    task resumption; measured empirically in E1 ($\Delta_{\mathrm{resume}}$
-    P95 $= 0.0001\,\si{\milli\second}$).
+    task resumption via the in-memory queue path; P95
+    $= 0.0001\,\si{\milli\second}$ (measured in E0). The upper bound
+    including serialisation is $\Drescrow = 0.0064\,\si{\milli\second}$
+    P95 (E1).
   \item \textbf{Metric 2} (continuity): throughput of non-blocked tasks
     during the escrow window. In P9, all tasks block ($\Theta_{\mathrm{safe}}
     = 0$). In P10, safe tasks are unaffected ($\Theta_{\mathrm{safe}} =
@@ -826,9 +844,8 @@ The protocol-level guarantees of V6 assume authentic escrow metadata;
 R10.1 is the implementation requirement that backs that assumption.
 \end{quote}
 
-This requirement will be formalised and implemented in P11 alongside
-the multi-hop formal treatment. We include A3b precisely to make this
-gap explicit rather than implicit.
+This requirement is left as an implementation gap for future work.
+We include A3b precisely to make it explicit rather than implicit.
 
 \subsection{Non-Blocking vs.\ Weaker Guarantees}
 
@@ -839,24 +856,6 @@ and the agent must re-derive it on retry (which may not be possible if
 the original context has changed). Escrow is strictly stronger: it
 preserves the exact call state and enables \emph{replay from
 $\Eescrow(\thalt)$} rather than retry.
-
-\subsection{Relationship to CAP-Like Tradeoffs}
-
-An intuition from distributed systems is useful here, though we do not
-formalise it as a CAP theorem (the definitions are not directly
-applicable):
-
-\begin{itemize}[itemsep=2pt]
-  \item P9 prioritises \emph{safety} (C in the analogy) over
-    \emph{liveness} (A): blocking until APB arrives.
-  \item P10 achieves \emph{bounded liveness} without relaxing safety:
-    the escrow invariant ensures safety holds at all times; T10.3
-    bounds liveness under the human-responsiveness assumption.
-\end{itemize}
-
-The key insight is that safety and liveness are not fundamentally
-opposed in human-mediated governance---they can coexist if the
-human response is bounded. V6 is the formal expression of that bound.
 
 \subsection{Scope of T10.2}
 
@@ -914,21 +913,19 @@ under asynchronous human resolution. The three theorems establish:
     is bounded.
   \item \textbf{T10.3} (Liveness): the first liveness theorem in the
     series; when the human responds within $\Ttimeout$, the suspended
-    call resumes with bounded delay
-    $\Dresume = 0.0064\,\si{\milli\second}$ P95.
+    call resumes with bounded delay $\Dresume \le 0.0064\,\si{\milli\second}$
+    P95 (conservative bound from E1; in-memory path $0.0001\,\si{\milli\second}$, E0).
 \end{itemize}
 
 The experiments support the construction and isolate one remaining
 implementation requirement: escrow persistence must be
 integrity-protected before V6 can be considered tamper-resistant in
-production. The A3b finding makes this gap explicit and provides a
-clear scope for P11.
+production. The A3b finding makes this gap explicit.
 
-P10 closes the liveness gap left open by P9 and establishes the formal
-foundation for the next Phase~II papers---P11 (escrow integrity and
-multi-hop formal treatment) and P12 (distributed multi-organisation
-governance)---while leaving escrow-store integrity as an explicit
-future requirement rather than a hidden assumption.
+P10 closes the liveness gap left open by P9 and opens the next
+research questions in multi-hop authority propagation and distributed
+governance, while leaving escrow-store integrity as an explicit future
+requirement rather than a hidden assumption.
 
 % =============================================================================
 \bibliographystyle{plainnat}
