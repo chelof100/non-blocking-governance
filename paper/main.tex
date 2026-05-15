@@ -735,8 +735,8 @@ Halt rate & P9 (tps) & P10 total (tps) & P10 safe (tps) & Speedup \\
 \end{table}
 
 P10 total throughput is bounded below by $N_{\mathrm{safe}}/t_{\mathrm{agent}}$,
-which approaches $50\,\text{tps}$ as $r \to 1$ (half the tasks are safe,
-none block). P9 throughput degrades as
+which approaches $50\,\text{tps}$ as $r \to 1$ (by construction, 50\% of
+tasks are governance-free baseline tasks; none block). P9 throughput degrades as
 $\Theta_{\mathrm{P9}} \approx 1/(r \cdot \tau_{\mathrm{APB}})$ for large~$r$.
 
 \paragraph{Gate.} P10 throughput $\ge$ P9 throughput at all $r > 0$:
