@@ -67,7 +67,7 @@ P9 committed explicitly: *"Paper 10 will formalise timeout semantics, escrow-sta
 | Paper | DOI | GitHub |
 |-------|-----|--------|
 | P8 — Identity-Bound Governance | 10.5281/zenodo.20157139 | [chelof100/identity-bound-governance](https://github.com/chelof100/identity-bound-governance) |
-| P9 — MCP-Native Governance | Zenodo pending | [chelof100/mcp-governed-agents](https://github.com/chelof100/mcp-governed-agents) |
+| P9 — MCP-Native Governance | [10.5281/zenodo.20162878](https://doi.org/10.5281/zenodo.20162878) | [chelof100/mcp-governed-agents](https://github.com/chelof100/mcp-governed-agents) |
 
 ## License
 
